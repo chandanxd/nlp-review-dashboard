@@ -23,6 +23,8 @@ data/raw/*.gz
 !data/raw/reviews.csv
 data/processed/*.csv
 !data/processed/reviews_clean.csv
+!data/processed/reviews_sentiment.csv
+!data/processed/reviews_final.csv
 
 # Jupyter
 .ipynb_checkpoints/
