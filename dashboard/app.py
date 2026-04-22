@@ -218,6 +218,13 @@ def compute_wordcloud_data(_df, sentiment_filter):
     sub = _df if sentiment_filter == "all" else _df[_df["predicted_sentiment"] == sentiment_filter]
     return get_wordcloud_data(sub)
 
+@st.cache_data(show_spinner="Loading ML model (first run only)")
+def load_transformer_model():
+    from src.sentiment import _load_transformer
+    return _load_transformer
+
+# Pre-warm the model at startup so the first "Analyse" click is instant
+_transformer_ready = load_transformer_model()
 
 # Sidebar
 with st.sidebar:
@@ -652,7 +659,7 @@ if run_live and live_input.strip():
     model_card(mc3, m["model"].replace("-", " ").title(), m["label"],
                "confidence", f"{m['score']:.2%}")
 
-    # — VADER gauge bar —
+    # VADER gauge bar
     compound = v["compound"]
     gauge_pct = int((compound + 1) / 2 * 100)   # map −1..1 → 0..100%
     gauge_color = C["bar_fill"] if compound >= 0.05 else (C["bar_neg"] if compound <= -0.05 else C["bar_neu"])
