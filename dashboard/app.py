@@ -218,7 +218,7 @@ def compute_wordcloud_data(_df, sentiment_filter):
     sub = _df if sentiment_filter == "all" else _df[_df["predicted_sentiment"] == sentiment_filter]
     return get_wordcloud_data(sub)
 
-@st.cache_data(show_spinner="Loading ML model (first run only)")
+@st.cache_resource(show_spinner="Loading ML model (first run only)")
 def load_transformer_model():
     from src.sentiment import _load_transformer
     return _load_transformer
