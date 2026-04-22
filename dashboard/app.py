@@ -8,6 +8,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
+import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from wordcloud import WordCloud
@@ -17,7 +19,7 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 
 from src.utils import load_processed, get_summary_stats, get_rating_distribution, get_sentiment_counts
-from src.sentiment import run_absa, sentiment_over_time
+from src.sentiment import run_absa, sentiment_over_time, analyzer, classify_sentiment
 from src.topic_modeling import train_lda, assign_topics, extract_keywords, get_wordcloud_data
 
 # Page config
@@ -203,7 +205,7 @@ def compute_absa(_df):
 
 @st.cache_data(show_spinner=False)
 def compute_lda(_df, n_topics):
-    doc_topics, topic_words = train_lda(_df, n_topics=n_topics)
+    lda_model, vectorizer, doc_topics, topic_words = train_lda(_df, n_topics=n_topics)
     df_with_topics = assign_topics(_df.copy(), doc_topics)
     return df_with_topics, topic_words
 
@@ -249,15 +251,6 @@ with st.sidebar:
         "Wordcloud sentiment",
         ["all", "positive", "negative"]
     )
-
-    # st.markdown("---")
-    # st.markdown(f"""
-    # <div style='font-size:0.65rem; color:{C['text_muted']}; line-height:1.8;'>
-    # NLP Review Dashboard<br>
-    # VTU · 6th Sem · NLP Project<br>
-    # May 2025
-    # </div>
-    # """, unsafe_allow_html=True)
 
 
 # Load + filter data
@@ -355,6 +348,7 @@ with r1c1:
         textfont=dict(color=C["text"], family="monospace"),
         showlegend=True,
     )])
+
     layout_updates = {
         "title": dict(text="Sentiment Distribution", font=dict(color=C["text"], size=13)),
         "legend": dict(font=dict(color=C["text"], size=10))
@@ -363,6 +357,7 @@ with r1c1:
         {k: v for k, v in LAYOUT_DEFAULTS.items() if k not in ("xaxis", "yaxis")}
     )
     fig_sent.update_layout(**layout_updates)
+
     st.plotly_chart(fig_sent, use_container_width=True, key="sent_pie")
 
 with r1c2:
@@ -380,7 +375,7 @@ with r1c2:
         st.plotly_chart(fig_rating, use_container_width=True, key="rating_bar")
 
 
-# Row 2: Sentiment over time (weekly, monthly, quarterly, annually)
+# Row 2: Sentiment over time
 if "review_date" in df.columns:
     st.markdown(f"<div class='section-label'>Sentiment Over Time</div>", unsafe_allow_html=True)
     freq_map = {"Weekly": "W", "Monthly": "ME", "Quarterly": "QE", "Annually": "YE"}
@@ -430,7 +425,7 @@ else:
         st.plotly_chart(fig_absa, use_container_width=True, key="absa_bar")
 
     with absa_c2:
-        st.markdown(f"<div style='font-size:0.7rem; color:{C['text_muted']}; margin-bottom:0.5rem;'>Aspect breakdown - sorted by score</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.7rem; color:{C['text_muted']}; margin-bottom:0.5rem;'>Aspect breakdown — sorted by score</div>", unsafe_allow_html=True)
         for _, row in absa_df.iterrows():
             score = row["avg_score"]
             norm = (score + 1) / 2  # normalize −1..1 → 0..1
@@ -450,7 +445,7 @@ else:
             </div>""", unsafe_allow_html=True)
 
 
-# Row 4: LDA Topic Modeling
+# Row 4: Topic Modeling
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"<div class='section-label'>LDA Topic Modeling</div>", unsafe_allow_html=True)
 
@@ -570,7 +565,145 @@ if "vader_compound" in df.columns:
     st.plotly_chart(fig_hist, use_container_width=True, key="vader_hist")
 
 
-# Row 7: Raw data explorer
+# Row 7: Try It Live
+st.markdown(f"<div class='section-label'>Try It Live</div>", unsafe_allow_html=True)
+st.markdown(
+    f"<div style='font-size:0.75rem; color:{C['text_muted']}; margin-bottom:1rem;'>"
+    "Analyse any sentence — product review or general text. "
+    "VADER is rule-based; TextBlob and the ML model (DistilBERT SST-2) work on any language."
+    "</div>",
+    unsafe_allow_html=True,
+)
+
+live_col1, live_col2 = st.columns([1.6, 1])
+
+with live_col1:
+    live_input = st.text_area(
+        "Enter any text",
+        placeholder="e.g. 'The battery drains too fast' or 'I had an amazing time at the concert!'",
+        height=110,
+        label_visibility="collapsed",
+    )
+    run_live = st.button("Analyse →", key="live_btn")
+
+with live_col2:
+    st.markdown(
+        f"<div style='font-size:0.65rem; color:{C['text_muted']}; line-height:2;'>"
+        "<b style='color:{t}'>VADER</b> — rule-based, best on review-style text<br>"
+        "<b style='color:{t}'>TextBlob</b> — pattern-based, good general baseline<br>"
+        "<b style='color:{t}'>DistilBERT</b> — fine-tuned SST-2 transformer model<br>"
+        "<b style='color:{t}'>Consensus</b> — majority vote across all three"
+        "</div>".format(t=C["text"]),
+        unsafe_allow_html=True,
+    )
+
+if run_live and live_input.strip():
+    from src.sentiment import analyze_general_text, extract_aspect_sentences
+    from src.preprocessing import clean_text
+
+    with st.spinner("Analysing..."):
+        result = analyze_general_text(live_input)
+        clean = clean_text(live_input)
+        aspects = extract_aspect_sentences(clean)
+        hit_aspects = {k: v for k, v in aspects.items() if v}
+
+    consensus = result["consensus"]
+    badge_color = {
+        "positive": ("#ffffff", "#1a1a2e") if C["is_dark"] else ("#111111", "#f0f0f0"),
+        "negative": ("#888888", "#1a1a1a") if C["is_dark"] else ("#555555", "#f5f5f5"),
+        "neutral": ("#555555", "#1a1a1a") if C["is_dark"] else ("#999999", "#fafafa"),
+    }.get(consensus, (C["text"], C["surface"]))
+
+    # Consensus banner
+    st.markdown(
+        f"<div style='background:{badge_color[1]}; border:1px solid {C['border']}; "
+        f"padding:1rem 1.4rem; border-radius:4px; margin-bottom:1rem; display:flex; "
+        f"align-items:center; gap:1rem;'>"
+        f"<span style='font-family:Syne,sans-serif; font-size:1.5rem; font-weight:800; "
+        f"color:{badge_color[0]};'>{consensus.upper()}</span>"
+        f"<span style='font-size:0.65rem; letter-spacing:0.2em; text-transform:uppercase; "
+        f"color:{C['text_muted']};'>consensus · majority vote</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Three model cards
+    mc1, mc2, mc3 = st.columns(3)
+
+    def model_card(col, title, label, score_label, score_val, extra_label=None, extra_val=None):
+        lc = C["bar_fill"] if label == "positive" else (C["bar_neg"] if label == "negative" else C["bar_neu"])
+        col.markdown(
+            f"<div class='metric-card'>"
+            f"<div class='metric-label'>{title}</div>"
+            f"<div class='metric-value' style='font-size:1.1rem; color:{lc};'>{label.upper()}</div>"
+            f"<div class='metric-sub'>{score_label}: {score_val}</div>"
+            + (f"<div class='metric-sub'>{extra_label}: {extra_val}</div>" if extra_label else "")
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+    v = result["vader"]
+    t = result["textblob"]
+    m = result["ml"]
+
+    model_card(mc1, "VADER", v["label"], "compound", f"{v['compound']:+.4f}")
+    model_card(mc2, "TextBlob", t["label"], "polarity", f"{t['polarity']:+.4f}",
+               "subjectivity", f"{t['subjectivity']:.4f}")
+    model_card(mc3, m["model"].replace("-", " ").title(), m["label"],
+               "confidence", f"{m['score']:.2%}")
+
+    # — VADER gauge bar —
+    compound = v["compound"]
+    gauge_pct = int((compound + 1) / 2 * 100)   # map −1..1 → 0..100%
+    gauge_color = C["bar_fill"] if compound >= 0.05 else (C["bar_neg"] if compound <= -0.05 else C["bar_neu"])
+    st.markdown(
+        f"<div style='margin-top:1rem;'>"
+        f"<div style='font-size:0.65rem; letter-spacing:0.2em; text-transform:uppercase; "
+        f"color:{C['text_muted']}; margin-bottom:0.4rem;'>VADER compound gauge</div>"
+        f"<div style='background:{C['border']}; border-radius:3px; height:8px; width:100%;'>"
+        f"<div style='width:{gauge_pct}%; background:{gauge_color}; height:100%; border-radius:3px; "
+        f"transition:width 0.4s ease;'></div></div>"
+        f"<div style='display:flex; justify-content:space-between; font-size:0.6rem; "
+        f"color:{C['text_muted']}; margin-top:0.2rem;'><span>−1.0 negative</span>"
+        f"<span>0 neutral</span><span>positive +1.0</span></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Detected aspects
+    if hit_aspects:
+        st.markdown(
+            f"<div style='margin-top:1.2rem; font-size:0.65rem; letter-spacing:0.2em; "
+            f"text-transform:uppercase; color:{C['text_muted']}; border-bottom:1px solid {C['border']}; "
+            f"padding-bottom:0.3rem; margin-bottom:0.6rem;'>Detected aspects</div>",
+            unsafe_allow_html=True,
+        )
+        asp_cols = st.columns(min(len(hit_aspects), 4))
+        for i, (aspect, sents) in enumerate(hit_aspects.items()):
+            asp_score = sum(
+                analyzer.polarity_scores(s)["compound"] for s in sents
+            ) / len(sents)
+            asp_label = classify_sentiment(asp_score)
+            lc = C["bar_fill"] if asp_label == "positive" else (C["bar_neg"] if asp_label == "negative" else C["bar_neu"])
+            asp_cols[i % len(asp_cols)].markdown(
+                f"<div class='metric-card' style='padding:0.8rem 1rem;'>"
+                f"<div class='metric-label'>{aspect.replace('_',' ')}</div>"
+                f"<div style='font-size:0.9rem; font-weight:700; color:{lc};'>{asp_label}</div>"
+                f"<div class='metric-sub'>{asp_score:+.3f}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            f"<div style='font-size:0.75rem; color:{C['text_muted']}; margin-top:0.8rem;'>"
+            "No product aspects detected — this looks like general text.</div>",
+            unsafe_allow_html=True,
+        )
+
+elif run_live and not live_input.strip():
+    st.warning("Please enter some text first.")
+
+# Row 9: Raw data explorer
 with st.expander("Raw Data Explorer"):
     display_cols = [c for c in ["clean_text", "overall", "vader_compound", "predicted_sentiment", "dominant_topic"] if c in df.columns]
     st.dataframe(
