@@ -46,18 +46,17 @@ _transformer_pipeline = None  # lazy singleton
 
 def _load_transformer():
     """Load distilbert SST-2 pipeline once and cache it."""
-    global _transformer_pipeline
-    if _transformer_pipeline is not None:
-        return _transformer_pipeline
     try:
         from transformers import pipeline as hf_pipeline
-        _transformer_pipeline = hf_pipeline(
+        import os
+        os.environ.setdefault("HF_HOME", "/tmp/huggingface")
+        pipe = hf_pipeline(
             task=cast(Any, "sentiment-analysis"),
             model="distilbert-base-uncased-finetuned-sst-2-english",
             truncation=True,
             max_length=512
         )
-        return _transformer_pipeline
+        return pipe
     except Exception:
         return None
 
