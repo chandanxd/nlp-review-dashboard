@@ -41,7 +41,9 @@ data/processed/*.csv
 Thumbs.db
 
 # Streamlit
-.streamlit/
+.streamlit/*
+!.streamlit/
+!.streamlit/config.toml
 
 # Models (large files)
 *.pkl
